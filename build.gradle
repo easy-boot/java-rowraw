@@ -1,0 +1,187 @@
+plugins {
+    id 'java'
+    id 'idea'
+    id 'maven'
+    id 'maven-publish'
+    id 'signing'
+}
+
+idea.project {
+    jdkName = JavaVersion.VERSION_1_8
+    languageLevel = JavaVersion.VERSION_1_8
+    ipr {
+        withXml { provider ->
+            provider.node.component.find { it.@name == 'VcsDirectoryMappings' }.mapping.@vcs = 'Git'
+        }
+    }
+}
+
+/**
+ * 版本
+ */
+version = '1.0.2'
+/**
+ * 组
+ */
+group 'top.easyboot.core'
+ext {
+    compileJava.options.encoding = 'UTF-8'
+    compileTestJava.options.encoding = 'UTF-8'
+}
+
+sourceCompatibility = JavaVersion.VERSION_1_8
+// 签名配置
+signing {
+    sign configurations.archives
+}
+// 这里的 dependsOn 依赖了 signArchives 这个被插件自动添加的任务
+// 目的是在 source 前执行签名
+task sourcesJar(type: Jar, dependsOn: [classes, signArchives]) {
+    classifier = 'sources'
+    from sourceSets.main.allSource
+}
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    classifier = 'javadoc'
+    from javadoc.destinationDir
+}
+tasks.withType(JavaCompile) {
+    /**
+     * 全局编码
+     */
+    options.encoding = 'UTF-8'
+    /**
+     * JVM 版本号要求 源
+     */
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    /**
+     * JVM 版本号要求 测试
+     */
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+// javadoc 配置，这里是自定义了 java doc 的一些配置
+javadoc {
+    description = "Generates project-level javadoc for use in -javadoc jar"
+
+    options.memberLevel = org.gradle.external.javadoc.JavadocMemberLevel.PROTECTED
+    options.author = true
+    options.version = true
+    options.header = project.name
+    options.addStringOption('Xdoclint:none', '-quiet')
+
+    // suppress warnings due to cross-module @see and @link references;
+    // note that global 'api' task does display all warnings.
+    logging.captureStandardError LogLevel.INFO
+    logging.captureStandardOutput LogLevel.INFO // suppress "## warnings" message
+    options.encoding = "UTF-8"  //编码一定要配置否则直接出错
+    options.charSet = 'UTF-8'
+}
+repositories {
+    /**
+     * 本地maven仓库
+     */
+    mavenLocal()
+    /**
+     * maven中央仓库，由Sonatype公司提供的服务，它是Apache Maven、SBT和其他构建系统的默认仓库
+     */
+    maven{ url 'https://maven.aliyun.com/repository/public'}
+    /**
+     * sonatype
+     */
+    maven{ url 'https://oss.sonatype.org/content/groups/public'}
+}
+
+dependencies {
+    testCompile group: 'junit', name: 'junit', version: '4.12'
+}
+
+/**
+ * 推送maven仓库
+ */
+publishing {
+    publications {
+        // 这一个推送项目名称，maven 相当于是一个 task name
+        maven(MavenPublication) {
+            /**
+             * 指定group/artifact/version信息，可以不填。
+             * 默认使用项目group/name/version作为groupId/artifactId/version
+             */
+            groupId project.group
+            artifactId project.name
+            version project.version
+
+            /**
+             * 如果是war包填写components.web，如果是jar包填写components.java
+             */
+            from components.java
+            artifact sourcesJar
+            artifact javadocJar
+            // 增加这个签名名称所在的位置，
+            // signArchives 输出文件中以你项目名作为的 key。这里获取这一个签名文件
+//            artifact signArchives.outputFiles.get(project.name)
+
+            // 添加 pom 相关信息
+            // https://docs.gradle.org/current/dsl/org.gradle.api.publish.maven.MavenPublication.html
+            pom {
+                name = project.name
+                description = "easyboot-rowraw"
+                url = "https://github.com/easyboot-top/java-rowraw"
+                licenses {
+                    license {
+                        name = "The Apache License, Version 2.0"
+                        url = "http://www.apache.org/licenses/LICENSE-2.0.txt"
+                    }
+                }
+                developers {
+                    // 添加开发者描述，这个id不知道是什么
+                    developer {
+                        id = "easyke"
+                        name = "easyke"
+                        email = "server@easyke.top"
+                    }
+                }
+                scm {
+                    connection = "scm:git:https://github.com/easyboot-top/java-rowraw.git"
+                    developerConnection = "scm:git:https://github.com/easyboot-top/java-rowraw.git"
+                    url = "https://github.com/easyboot-top/java-rowraw"
+                }
+            }
+        }
+    }
+    repositories {
+        // 添加一个远程仓库地址
+        maven {
+            // 在对 task 中会生成对应的名称 publishMavenJavaPublicationToxxx
+            // 后面的 xxx 就是你这里的名称，表示你要把jar 上传到这个仓库中
+
+            if (project.version.endsWith('-SNAPSHOT')) {
+                // 快照版本的nexus|snapshots仓库地址
+                name = 'sonatypeSnapshotRepository'
+                url = 'https://oss.sonatype.org/content/repositories/snapshots/'
+            } else {
+                // release版本的仓库地址
+                name 'sonatypeRepository'
+                url 'https://oss.sonatype.org/service/local/staging/deploy/maven2/'
+            }
+
+            credentials {
+                username = "${NEXUS_USERNAME}"  // 之前在 sonatype 注册的账户名
+                password = "${NEXUS_PASSWORD}" // 对应的密码
+            }
+        }
+    }
+}
+// 签名配置，注意这里的顺序，今天第一次知道 gradle 中的 task 等配置也是有顺序的
+// 必须在 publishing 配置之后
+signing {
+    sign publishing.publications.maven
+}
+jar {
+    enabled = true
+    version = rootProject.getVersion()
+    manifest {
+        attributes(
+                'Class-Path': configurations.compile.collect { it.getName() }.join(' '),
+                'Main-Class': 'top.easyboot.springboot.easyboot.Application'
+        )
+    }
+}
